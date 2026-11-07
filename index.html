@@ -42,6 +42,15 @@
     const GROUND_HEIGHT = 50;    // Maan paksuus ruudun alareunassa
     const GROUND_COLOR = "#2ed573"; // Maan väri
 
+    // --- Esteet ---
+    const OBSTACLE_SPEED = 6;      // Kuinka nopeasti esteet liikkuvat vasemmalle
+    const OBSTACLE_WIDTH = 30;     // Esteen leveys
+    const OBSTACLE_MIN_HEIGHT = 30; // Matalin mahdollinen este
+    const OBSTACLE_MAX_HEIGHT = 70; // Korkein mahdollinen este
+    const OBSTACLE_COLOR = "#2f3542"; // Esteen väri
+    const MIN_GAP = 60;  // Lyhin aika (ruutuina) kahden esteen välillä
+    const MAX_GAP = 130; // Pisin aika (ruutuina) kahden esteen välillä
+
     // ============================================
     //  Pelin valmistelu
     // ============================================
@@ -59,10 +68,39 @@
       onGround: true            // onko hahmo maassa?
     };
 
+    // Lista (taulukko) kaikista ruudulla olevista esteistä
+    let obstacles = [];
+    // Laskuri: montako ruutua seuraavaan esteeseen
+    let nextObstacleIn = 60;
+    // Onko peli päättynyt?
+    let gameOver = false;
+
+    // Apufunktio: arpoo kokonaisluvun väliltä min–max
+    function randomBetween(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
     // ============================================
-    //  Hyppääminen
+    //  Uusi peli: palautetaan kaikki alkutilaan
+    // ============================================
+    function resetGame() {
+      player.y = groundY - PLAYER_SIZE;
+      player.vy = 0;
+      player.onGround = true;
+      obstacles = [];
+      nextObstacleIn = 60;
+      gameOver = false;
+    }
+
+    // ============================================
+    //  Hyppääminen (ja uuden pelin aloitus)
     // ============================================
     function jump() {
+      // Jos peli on loppunut, hyppynappi aloittaa uuden pelin
+      if (gameOver) {
+        resetGame();
+        return;
+      }
       // Hypätä saa vain maasta, ettei voi lentää ilmassa loputtomasti
       if (player.onGround) {
         player.vy = -JUMP_POWER; // miinus = ylöspäin
@@ -82,9 +120,38 @@
     canvas.addEventListener("pointerdown", jump);
 
     // ============================================
+    //  Esteiden luominen
+    // ============================================
+    function spawnObstacle() {
+      const height = randomBetween(OBSTACLE_MIN_HEIGHT, OBSTACLE_MAX_HEIGHT);
+      obstacles.push({
+        x: canvas.width,          // syntyy ruudun oikeaan reunaan
+        y: groundY - height,      // seisoo maan päällä
+        width: OBSTACLE_WIDTH,
+        height: height
+      });
+    }
+
+    // ============================================
+    //  Törmäyksen tarkistus
+    // ============================================
+    // Kaksi suorakulmiota osuvat toisiinsa, jos ne ovat päällekkäin
+    // SEKÄ vaakasuunnassa ETTÄ pystysuunnassa.
+    function isColliding(a, b) {
+      return a.x < b.x + b.width &&
+             a.x + a.width > b.x &&
+             a.y < b.y + b.height &&
+             a.y + a.height > b.y;
+    }
+
+    // ============================================
     //  Päivitys: liikutetaan asioita joka ruudunpäivityksellä
     // ============================================
     function update() {
+      // Kun peli on ohi, mikään ei liiku
+      if (gameOver) return;
+
+      // --- Hahmo ---
       // Painovoima kasvattaa putoamisnopeutta koko ajan
       player.vy += GRAVITY;
       // Nopeus siirtää hahmoa
@@ -95,6 +162,37 @@
         player.y = groundY - PLAYER_SIZE;
         player.vy = 0;
         player.onGround = true;
+      }
+
+      // --- Uudet esteet ---
+      nextObstacleIn--; // lasketaan alaspäin joka ruudulla
+      if (nextObstacleIn <= 0) {
+        spawnObstacle();
+        nextObstacleIn = randomBetween(MIN_GAP, MAX_GAP); // arvotaan seuraava väli
+      }
+
+      // --- Esteiden liikutus ---
+      for (const obstacle of obstacles) {
+        obstacle.x -= OBSTACLE_SPEED; // liikkuu vasemmalle
+      }
+
+      // Poistetaan esteet, jotka ovat menneet kokonaan ruudun vasemmalta ulos
+      obstacles = obstacles.filter(o => o.x + o.width > 0);
+
+      // --- Törmäys ---
+      // Tehdään hahmosta suorakulmio-olio, jotta sitä voi verrata esteisiin.
+      // Pienennetään sitä vähän (4 px joka reunalta), jotta "melkein osumat"
+      // eivät tunnu epäreiluilta.
+      const playerBox = {
+        x: player.x + 4,
+        y: player.y + 4,
+        width: PLAYER_SIZE - 8,
+        height: PLAYER_SIZE - 8
+      };
+      for (const obstacle of obstacles) {
+        if (isColliding(playerBox, obstacle)) {
+          gameOver = true;
+        }
       }
     }
 
@@ -109,6 +207,12 @@
       ctx.fillStyle = GROUND_COLOR;
       ctx.fillRect(0, groundY, canvas.width, GROUND_HEIGHT);
 
+      // Esteet
+      ctx.fillStyle = OBSTACLE_COLOR;
+      for (const obstacle of obstacles) {
+        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+      }
+
       // Hahmo (toistaiseksi neliö)
       ctx.fillStyle = PLAYER_COLOR;
       ctx.fillRect(player.x, player.y, PLAYER_SIZE, PLAYER_SIZE);
@@ -118,6 +222,21 @@
       ctx.fillRect(player.x + 24, player.y + 8, 10, 10);
       ctx.fillStyle = "black";
       ctx.fillRect(player.x + 29, player.y + 11, 5, 5);
+
+      // Peli ohi -teksti
+      if (gameOver) {
+        // Puoliläpinäkyvä tumma kerros koko ruudun päälle
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "white";
+        ctx.textAlign = "center";
+        ctx.font = "bold 48px sans-serif";
+        ctx.fillText("PELI OHI!", canvas.width / 2, canvas.height / 2 - 10);
+        ctx.font = "20px sans-serif";
+        ctx.fillText("Paina välilyöntiä tai klikkaa aloittaaksesi uudelleen",
+                     canvas.width / 2, canvas.height / 2 + 30);
+      }
     }
 
     // ============================================
