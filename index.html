@@ -51,6 +51,7 @@
     const SPEED_INCREASE = 0.003; // Kuinka paljon vauhti kasvaa joka ruudulla
     const MAX_SPEED = 15;         // Vauhti ei kasva tätä suuremmaksi
     const POINTS_PER_PIXEL = 0.1; // Pisteitä jokaisesta juostusta pikselistä
+    const HIGHSCORE_KEY = "dodon-saari-ennatys"; // Nimi, jolla ennätys tallennetaan selaimeen
 
     // --- Värit (teema) ---
     const DODO_BODY = "#8a94a6";   // Dodon höyhenet
@@ -98,10 +99,53 @@
     let distance = 0;
     // Ruutulaskuri animaatioita varten (esim. jalkojen liike)
     let frame = 0;
+    // Ennätys luetaan selaimen muistista (ks. loadHighScore alempana)
+    let highScore = loadHighScore();
+    // Tuliko viime pelissä uusi ennätys? Tällä näytetään juhlateksti.
+    let newRecord = false;
 
     // Apufunktio: arpoo kokonaisluvun väliltä min–max
     function randomBetween(min, max) {
       return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    // ============================================
+    //  Ennätyksen tallennus
+    // ============================================
+    // localStorage on selaimen pieni "muistivihko". Sinne tallennettu tieto
+    // säilyy, vaikka sivun tai koko selaimen sulkee. Tieto tallennetaan
+    // tekstinä avaimen (HIGHSCORE_KEY) alle, vähän kuin lokeroon nimilapun kanssa.
+    //
+    // try/catch tarkoittaa: "yritä tätä, ja jos tulee virhe, älä kaadu".
+    // Esim. selaimen yksityisessä tilassa muisti voi olla estetty.
+    function loadHighScore() {
+      try {
+        const saved = localStorage.getItem(HIGHSCORE_KEY); // teksti tai null
+        return Number(saved) || 0; // muutetaan luvuksi; jos ei ole, 0
+      } catch (e) {
+        return 0;
+      }
+    }
+
+    function saveHighScore(value) {
+      try {
+        localStorage.setItem(HIGHSCORE_KEY, value);
+      } catch (e) {
+        // Tallennus ei onnistunut – peli toimii silti, ennätys vain unohtuu
+      }
+    }
+
+    // Kutsutaan kun peli päättyy: onko tulos paras tähän mennessä?
+    function endGame() {
+      gameOver = true;
+      const finalScore = Math.floor(score);
+      if (finalScore > highScore) {
+        highScore = finalScore;
+        saveHighScore(highScore);
+        newRecord = true;
+      } else {
+        newRecord = false;
+      }
     }
 
     // ============================================
@@ -235,7 +279,8 @@
           height: obstacle.height - shrink * 2
         };
         if (isColliding(playerBox, fireBox)) {
-          gameOver = true;
+          endGame();
+          return; // ei tarkisteta muita palloja, peli on jo ohi
         }
       }
     }
@@ -459,6 +504,8 @@
       ctx.textAlign = "right";
       ctx.font = "bold 24px sans-serif";
       ctx.fillText("Pisteet: " + Math.floor(score), canvas.width - 20, 40);
+      ctx.font = "bold 16px sans-serif";
+      ctx.fillText("Ennätys: " + highScore, canvas.width - 20, 64);
 
       // Peli ohi -teksti
       if (gameOver) {
@@ -471,8 +518,19 @@
         ctx.font = "bold 48px sans-serif";
         ctx.fillText("DODO PALOI! 🔥", canvas.width / 2, canvas.height / 2 - 30);
         ctx.font = "bold 28px sans-serif";
-        ctx.fillText("Sait " + Math.floor(score) + " pistettä",
-                     canvas.width / 2, canvas.height / 2 + 10);
+        if (newRecord) {
+          // Vilkkuva juhlateksti: frame-laskurin avulla teksti näkyy
+          // vuorotellen 20 ruutua ja on piilossa 10 ruutua
+          if (frame % 30 < 20) {
+            ctx.fillStyle = "#ffd54f";
+            ctx.fillText("🏆 UUSI ENNÄTYS: " + highScore + " 🏆",
+                         canvas.width / 2, canvas.height / 2 + 10);
+          }
+        } else {
+          ctx.fillText("Sait " + Math.floor(score) + " pistettä  (ennätys " + highScore + ")",
+                       canvas.width / 2, canvas.height / 2 + 10);
+        }
+        ctx.fillStyle = "white";
         ctx.font = "20px sans-serif";
         ctx.fillText("Paina välilyöntiä tai klikkaa aloittaaksesi uudelleen",
                      canvas.width / 2, canvas.height / 2 + 50);
