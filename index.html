@@ -53,6 +53,11 @@
     const POINTS_PER_PIXEL = 0.1; // Pisteitä jokaisesta juostusta pikselistä
     const HIGHSCORE_KEY = "dodon-saari-ennatys"; // Nimi, jolla ennätys tallennetaan selaimeen
 
+    // --- Kilpi (tehostin) ---
+    const SHIELD_CHANCE = 0.2;  // Todennäköisyys, että tulipallon jälkeen tulee kilpi (0.2 = 20 %)
+    const SHIELD_SIZE = 30;     // Kilven koko
+    const SHIELD_HEIGHT = 95;   // Kuinka korkealla maasta kilpi leijuu (pitää hypätä!)
+
     // --- Äänet ---
     const VOLUME = 0.5;          // Äänenvoimakkuus: 0 = hiljaa, 1 = täysillä
     const MILESTONE_EVERY = 100; // Kuinka monen pisteen välein soi "pling"
@@ -107,6 +112,12 @@
     let highScore = loadHighScore();
     // Tuliko viime pelissä uusi ennätys? Tällä näytetään juhlateksti.
     let newRecord = false;
+    // Ilmassa leijuvat kilvet, joita voi napata
+    let shields = [];
+    // Onko dodolla kilpi suojana?
+    let hasShield = false;
+    // Kilven särkymisanimaatio: montako ruutua sitä on vielä jäljellä
+    let shieldPopTimer = 0;
     // Ovatko äänet päällä? (M-näppäin vaihtaa)
     let soundOn = true;
     // Monesko "pling"-raja on jo saavutettu tässä pelissä
@@ -189,6 +200,18 @@
       playTone(1320, 1320, 0.15, "triangle", 0.3, 0.08);
     }
 
+    // Kilven nappaus: nopea nouseva "tilulii"
+    function playShieldPickupSound() {
+      playTone(600, 600, 0.08, "sine", 0.3);
+      playTone(900, 900, 0.08, "sine", 0.3, 0.07);
+      playTone(1200, 1200, 0.15, "sine", 0.3, 0.14);
+    }
+
+    // Kilpi särkyy: kirkas "kling" joka laskee
+    function playShieldBreakSound() {
+      playTone(1500, 300, 0.3, "triangle", 0.35);
+    }
+
     // Uusi ennätys: pieni fanfaari, neljä nousevaa nuottia (C–E–G–C)
     function playRecordSound() {
       const notes = [523, 659, 784, 1047];
@@ -252,6 +275,9 @@
       speed = START_SPEED;
       score = 0;
       lastMilestone = 0;
+      shields = [];
+      hasShield = false;
+      shieldPopTimer = 0;
     }
 
     // ============================================
@@ -354,7 +380,34 @@
       if (nextObstacleIn <= 0) {
         spawnObstacle();
         nextObstacleIn = randomBetween(MIN_GAP, MAX_GAP);
+
+        // Joskus tulipallon perään tulee kilpi. Ehdot:
+        //  - arpa osuu (Math.random() antaa luvun väliltä 0–1)
+        //  - dodolla ei ole jo kilpeä, eikä ruudulla ole toista kilpeä
+        // && tarkoittaa "ja": kaikkien ehtojen pitää olla tosia.
+        if (Math.random() < SHIELD_CHANCE && !hasShield && shields.length === 0) {
+          // Kilpi sijoitetaan puoliväliin tämän ja seuraavan tulipallon väliin,
+          // jotta sen voi napata ilman että osuu tulipalloon.
+          shields.push({
+            x: canvas.width + (nextObstacleIn * speed) / 2,
+            baseY: groundY - SHIELD_HEIGHT - SHIELD_SIZE / 2,
+            y: 0, // lasketaan alla joka ruudulla (leijuminen)
+            width: SHIELD_SIZE,
+            height: SHIELD_SIZE
+          });
+        }
       }
+
+      // --- Kilpien liikutus ---
+      for (const shield of shields) {
+        shield.x -= speed;
+        // Math.sin tekee aaltoliikettä: kilpi keinuu ylös ja alas
+        shield.y = shield.baseY + Math.sin(frame * 0.1) * 6;
+      }
+      shields = shields.filter(s => s.x + s.width > 0);
+
+      // Kilven särkymisanimaatio etenee
+      if (shieldPopTimer > 0) shieldPopTimer--;
 
       // --- Tulipallojen liikutus ---
       for (const obstacle of obstacles) {
@@ -372,6 +425,16 @@
         width: PLAYER_SIZE - 12,
         height: PLAYER_SIZE - 8
       };
+      // Kilven nappaus: osuuko dodo kilpeen?
+      for (const shield of shields) {
+        if (isColliding(playerBox, shield)) {
+          hasShield = true;
+          shield.taken = true; // merkitään poistettavaksi
+          playShieldPickupSound();
+        }
+      }
+      shields = shields.filter(s => !s.taken);
+
       for (const obstacle of obstacles) {
         // Myös tulipallon laatikkoa pienennetään, koska ympyrä ei täytä
         // neliön kulmia.
@@ -383,10 +446,20 @@
           height: obstacle.height - shrink * 2
         };
         if (isColliding(playerBox, fireBox)) {
-          endGame();
-          return; // ei tarkisteta muita palloja, peli on jo ohi
+          if (hasShield) {
+            // Kilpi pelasti! Kilpi ja tulipallo katoavat, peli jatkuu.
+            hasShield = false;
+            obstacle.destroyed = true;
+            shieldPopTimer = 20;
+            playShieldBreakSound();
+          } else {
+            endGame();
+            return; // ei tarkisteta muita palloja, peli on jo ohi
+          }
         }
       }
+      // Poistetaan kilpeen törmänneet tulipallot
+      obstacles = obstacles.filter(o => !o.destroyed);
     }
 
     // ============================================
@@ -587,6 +660,58 @@
       ctx.fill();
     }
 
+    // --- Kilpi-tehostin (leijuva esine) ---
+    function drawShieldItem(shield) {
+      const x = shield.x;
+      const y = shield.y;
+      const w = shield.width;
+
+      // Hehku kilven ympärillä
+      ellipse(x + w / 2, y + w / 2, w * 0.8, w * 0.8, "rgba(255,255,255,0.35)");
+
+      // Kilven muoto: suora yläreuna, kaartuvat sivut, terävä alakärki
+      ctx.fillStyle = "#1976d2";
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + w, y);
+      ctx.quadraticCurveTo(x + w, y + w * 0.7, x + w / 2, y + w);
+      ctx.quadraticCurveTo(x, y + w * 0.7, x, y);
+      ctx.fill();
+      ctx.stroke();
+
+      // Valkoinen plus-merkki keskellä
+      ctx.fillStyle = "white";
+      ctx.fillRect(x + w / 2 - 2, y + 6, 4, 16);  // pystyviiva
+      ctx.fillRect(x + w / 2 - 8, y + 12, 16, 4); // vaakaviiva
+    }
+
+    // --- Suojakupla dodon ympärillä ---
+    function drawShieldBubble() {
+      const cx = player.x + PLAYER_SIZE / 2 + 4;
+      const cy = player.y + PLAYER_SIZE / 2;
+      if (hasShield) {
+        // Kupla "sykkii": koko vaihtelee vähän Math.sinin avulla
+        const r = 32 + Math.sin(frame * 0.15) * 2;
+        ellipse(cx, cy, r, r, "rgba(100,181,246,0.3)");
+        ctx.strokeStyle = "rgba(187,222,251,0.9)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (shieldPopTimer > 0) {
+        // Särkyessä kupla laajenee ja haalistuu
+        const progress = 1 - shieldPopTimer / 20; // 0 → 1
+        ctx.strokeStyle = "rgba(187,222,251," + (1 - progress) + ")";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 32 + progress * 40, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
     // ============================================
     //  Piirtäminen: kaikki yhdessä
     // ============================================
@@ -601,7 +726,12 @@
         drawFireball(obstacle);
       }
 
+      for (const shield of shields) {
+        drawShieldItem(shield);
+      }
+
       drawDodo(player.x, player.y);
+      drawShieldBubble();
 
       // Pisteet oikeaan yläkulmaan
       ctx.fillStyle = "#3e2723";
