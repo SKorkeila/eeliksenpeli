@@ -89,10 +89,21 @@
     const ARROW_FLY_HEIGHT = 37;   // Kuinka korkealla maasta nuoli lentää (dodon pään korkeus)
     const ARROW_LENGTH = 50;       // Nuolen pituus
 
+    // --- Hedelmät (lisäpisteet) ---
+    const FRUIT_CHANCE = 0.5;   // Todennäköisyys, että esteiden väliin tulee hedelmärivi
+    const FRUIT_POINTS = 25;    // Montako lisäpistettä yksi hedelmä antaa
+    const FRUIT_SIZE = 28;      // Hedelmän koko
+    const FRUIT_TYPES = ["🍌", "🥭", "🍍", "🍉", "🥥"]; // Kokeile lisätä omia emojeja!
+
     // --- Kilpi (tehostin) ---
     const SHIELD_CHANCE = 0.2;  // Todennäköisyys, että tulipallon jälkeen tulee kilpi (0.2 = 20 %)
     const SHIELD_SIZE = 30;     // Kilven koko
     const SHIELD_HEIGHT = 95;   // Kuinka korkealla maasta kilpi leijuu (pitää hypätä!)
+
+    // --- Hidastus (tehostin) ---
+    const SLOW_CHANCE = 0.12;   // Todennäköisyys, että esteen perään tulee tiimalasi
+    const SLOW_DURATION = 300;  // Kuinka kauan hidastus kestää (ruutuina, 60 = 1 sekunti)
+    const SLOW_FACTOR = 0.5;    // Kuinka hitaaksi maailma muuttuu (0.5 = puolet normaalista)
 
     // --- Äänet ---
     const VOLUME = 0.5;          // Äänenvoimakkuus: 0 = hiljaa, 1 = täysillä
@@ -158,6 +169,17 @@
     let causeOfDeath = "fire";
     // Onko laite kosketusnäytöllinen? Silloin piirretään vinkkinuolet hiekkaan.
     const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
+    // Kerättävät hedelmät
+    let fruits = [];
+    // Leijuvat "+25"-tekstit, jotka näkyvät kun hedelmän nappaa
+    let floatingTexts = [];
+    // Ilmassa leijuvat tiimalasit (hidastustehostin)
+    let hourglasses = [];
+    // Montako ruutua hidastusta on vielä jäljellä (0 = ei hidastusta)
+    let slowTimer = 0;
+    // Maailman nopeuskerroin: 1 = normaali, SLOW_FACTOR = hidastettu.
+    // Kaikki liike kerrotaan tällä luvulla!
+    let timeScale = 1;
     // Ilmassa leijuvat kilvet, joita voi napata
     let shields = [];
     // Onko dodolla kilpi suojana?
@@ -253,6 +275,23 @@
       playTone(1200, 1200, 0.15, "sine", 0.3, 0.14);
     }
 
+    // Hedelmän nappaus: lyhyt "bling". Jokainen rivin seuraava hedelmä
+    // soi vähän korkeammalta – nappaa koko rivi, niin kuulet melodian!
+    function playFruitSound(index) {
+      const freq = 800 + index * 150;
+      playTone(freq, freq * 1.5, 0.1, "square", 0.1);
+    }
+
+    // Hidastus alkaa: pitkä laskeva "wuuuuu" (kuin nauha hidastuisi)
+    function playSlowStartSound() {
+      playTone(900, 150, 0.8, "sine", 0.3);
+    }
+
+    // Hidastus loppuu: nouseva "wiiip" takaisin normaaliin
+    function playSlowEndSound() {
+      playTone(200, 900, 0.4, "sine", 0.25);
+    }
+
     // Kilpi särkyy: kirkas "kling" joka laskee
     function playShieldBreakSound() {
       playTone(1500, 300, 0.3, "triangle", 0.35);
@@ -334,6 +373,11 @@
       hasShield = false;
       shieldPopTimer = 0;
       ducking = false;
+      fruits = [];
+      floatingTexts = [];
+      hourglasses = [];
+      slowTimer = 0;
+      timeScale = 1;
     }
 
     // ============================================
@@ -472,6 +516,39 @@
       });
     }
 
+    // ============================================
+    //  Hedelmärivin luominen
+    // ============================================
+    function spawnFruitRow() {
+      const count = randomBetween(3, 5);        // montako hedelmää riviin
+      const spacing = 40;                        // hedelmien väli pikseleinä
+      const rowWidth = (count - 1) * spacing;
+      // Rivi keskitetään tämän ja seuraavan esteen väliin
+      const gapPixels = nextObstacleIn * speed;
+      const startX = canvas.width + gapPixels / 2 - rowWidth / 2;
+      // Arvotaan muoto: suora rivi maassa tai kaari ilmassa (pitää hypätä!)
+      const isArc = Math.random() < 0.5;
+      const emoji = FRUIT_TYPES[randomBetween(0, FRUIT_TYPES.length - 1)];
+
+      for (let i = 0; i < count; i++) {
+        let y = groundY - FRUIT_SIZE - 8; // maan rajassa
+        if (isArc) {
+          // t kulkee 0 → 1 rivin alusta loppuun. Math.sin(t * PI) on
+          // 0 reunoilla ja 1 keskellä, joten keskimmäinen hedelmä on korkeimmalla.
+          const t = count === 1 ? 0.5 : i / (count - 1);
+          y -= 30 + Math.sin(t * Math.PI) * 60;
+        }
+        fruits.push({
+          x: startX + i * spacing,
+          y: y,
+          width: FRUIT_SIZE,
+          height: FRUIT_SIZE,
+          emoji: emoji,
+          index: i // monesko rivissä – äänen korkeutta varten
+        });
+      }
+    }
+
     // Onko dodo oikeasti kyykyssä? Kyykkyyn pääsee vain maassa –
     // ilmassa alas-nappi tekee sen sijaan nopean pudotuksen.
     function isDucked() {
@@ -516,11 +593,26 @@
         player.onGround = true;
       }
 
+      // --- Hidastus ---
+      if (slowTimer > 0) {
+        slowTimer--;
+        if (slowTimer === 0) playSlowEndSound();
+      }
+      // Mihin timeScale on menossa: hidastettuna SLOW_FACTOR, muuten 1
+      const targetScale = slowTimer > 0 ? SLOW_FACTOR : 1;
+      // Ei hypätä suoraan, vaan liu'utaan pehmeästi: joka ruudulla siirrytään
+      // 8 % jäljellä olevasta matkasta. Siksi hidastus "jarruttaa" sulavasti.
+      timeScale += (targetScale - timeScale) * 0.08;
+
+      // move = kuinka monta pikseliä maailma liikkuu tällä ruudulla.
+      // Dodon hypyt EIVÄT hidastu – vain maailma. Dodo on hetken supernopea!
+      const move = speed * timeScale;
+
       // --- Vauhti ja pisteet ---
       // Vauhti kasvaa vähän joka ruudulla, mutta ei yli MAX_SPEEDin.
-      speed = Math.min(speed + SPEED_INCREASE, MAX_SPEED);
-      score += speed * POINTS_PER_PIXEL;
-      distance += speed;
+      speed = Math.min(speed + SPEED_INCREASE * timeScale, MAX_SPEED);
+      score += move * POINTS_PER_PIXEL;
+      distance += move;
 
       // Soitetaan "pling" aina kun ylitetään uusi MILESTONE_EVERY-raja
       const milestone = Math.floor(score / MILESTONE_EVERY);
@@ -530,7 +622,7 @@
       }
 
       // --- Uudet tulipallot ---
-      nextObstacleIn--;
+      nextObstacleIn -= timeScale; // hidastettuna esteitä tulee harvemmin
       if (nextObstacleIn <= 0) {
         spawnObstacle();
         nextObstacleIn = randomBetween(MIN_GAP, MAX_GAP);
@@ -539,7 +631,9 @@
         //  - arpa osuu (Math.random() antaa luvun väliltä 0–1)
         //  - dodolla ei ole jo kilpeä, eikä ruudulla ole toista kilpeä
         // && tarkoittaa "ja": kaikkien ehtojen pitää olla tosia.
+        let shieldSpawned = false; // muistetaan, tuliko kilpi – silloin ei tehdä hedelmiä
         if (Math.random() < SHIELD_CHANCE && !hasShield && shields.length === 0) {
+          shieldSpawned = true;
           // Kilpi sijoitetaan puoliväliin tämän ja seuraavan tulipallon väliin,
           // jotta sen voi napata ilman että osuu tulipalloon.
           shields.push({
@@ -550,15 +644,53 @@
             height: SHIELD_SIZE
           });
         }
+
+        // Tai tiimalasi (jos hidastus ei ole jo päällä)
+        if (!shieldSpawned && slowTimer === 0 && hourglasses.length === 0 &&
+            Math.random() < SLOW_CHANCE) {
+          shieldSpawned = true; // (tämäkin estää hedelmät samaan väliin)
+          hourglasses.push({
+            x: canvas.width + (nextObstacleIn * speed) / 2,
+            baseY: groundY - SHIELD_HEIGHT - SHIELD_SIZE / 2,
+            y: 0,
+            width: SHIELD_SIZE,
+            height: SHIELD_SIZE
+          });
+        }
+
+        // Muulloin esteiden väliin voi tulla hedelmärivi
+        if (!shieldSpawned && Math.random() < FRUIT_CHANCE) {
+          spawnFruitRow();
+        }
       }
+
+      // --- Hedelmien liikutus ---
+      for (const fruit of fruits) {
+        fruit.x -= move;
+      }
+      fruits = fruits.filter(f => f.x + f.width > 0);
+
+      // --- Leijuvat tekstit nousevat ja haalistuvat ---
+      for (const t of floatingTexts) {
+        t.y -= 1;
+        t.life--;
+      }
+      floatingTexts = floatingTexts.filter(t => t.life > 0);
 
       // --- Kilpien liikutus ---
       for (const shield of shields) {
-        shield.x -= speed;
+        shield.x -= move;
         // Math.sin tekee aaltoliikettä: kilpi keinuu ylös ja alas
         shield.y = shield.baseY + Math.sin(frame * 0.1) * 6;
       }
       shields = shields.filter(s => s.x + s.width > 0);
+
+      // --- Tiimalasien liikutus ---
+      for (const glass of hourglasses) {
+        glass.x -= move;
+        glass.y = glass.baseY + Math.sin(frame * 0.1) * 6;
+      }
+      hourglasses = hourglasses.filter(g => g.x + g.width > 0);
 
       // Kilven särkymisanimaatio etenee
       if (shieldPopTimer > 0) shieldPopTimer--;
@@ -566,9 +698,9 @@
       // --- Tulipallojen liikutus ---
       for (const obstacle of obstacles) {
         if (obstacle.type === "arrow") {
-          obstacle.x -= speed + ARROW_EXTRA_SPEED; // nuolet ovat nopeampia
+          obstacle.x -= (speed + ARROW_EXTRA_SPEED) * timeScale; // nuolet ovat nopeampia
         } else {
-          obstacle.x -= speed;
+          obstacle.x -= move;
         }
       }
       // Poistetaan ruudulta pois menneet tulipallot
@@ -603,6 +735,32 @@
         }
       }
       shields = shields.filter(s => !s.taken);
+
+      // Tiimalasin nappaus: hidastus alkaa!
+      for (const glass of hourglasses) {
+        if (isColliding(playerBox, glass)) {
+          glass.taken = true;
+          slowTimer = SLOW_DURATION;
+          playSlowStartSound();
+        }
+      }
+      hourglasses = hourglasses.filter(g => !g.taken);
+
+      // Hedelmien nappaus: lisäpisteitä!
+      for (const fruit of fruits) {
+        if (isColliding(playerBox, fruit)) {
+          fruit.taken = true;
+          score += FRUIT_POINTS;
+          playFruitSound(fruit.index);
+          floatingTexts.push({
+            text: "+" + FRUIT_POINTS,
+            x: fruit.x + fruit.width / 2,
+            y: fruit.y,
+            life: 40 // montako ruutua teksti näkyy
+          });
+        }
+      }
+      fruits = fruits.filter(f => !f.taken);
 
       for (const obstacle of obstacles) {
         // Tulipallon laatikkoa pienennetään, koska ympyrä ei täytä
@@ -875,6 +1033,70 @@
       ctx.fillText("napauta = hyppy ⬆", canvas.width - 12, canvas.height - 14);
     }
 
+    // --- Hedelmä ---
+    // Hedelmät ovat emojeja: ne piirretään tekstinä, ihan kuin kirjaimet!
+    function drawFruit(fruit) {
+      // Pieni pomppiminen; fruit.index tekee sen, että hedelmät pomppivat
+      // eri tahdissa (aaltomaisesti)
+      const bob = Math.sin(frame * 0.15 + fruit.index) * 3;
+      ctx.save();
+      ctx.font = FRUIT_SIZE + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle"; // teksti keskitetään pystysuunnassa
+      ctx.fillText(fruit.emoji, fruit.x + fruit.width / 2, fruit.y + fruit.height / 2 + bob);
+      ctx.restore();
+    }
+
+    // --- Leijuva pisteteksti ---
+    function drawFloatingText(t) {
+      ctx.save();
+      ctx.globalAlpha = t.life / 40; // haalistuu loppua kohti (1 → 0)
+      ctx.font = "bold 22px sans-serif";
+      ctx.textAlign = "center";
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#3e2723";   // tumma reunus
+      ctx.strokeText(t.text, t.x, t.y);
+      ctx.fillStyle = "#ffd54f";     // kultainen täyttö
+      ctx.fillText(t.text, t.x, t.y);
+      ctx.restore();
+    }
+
+    // --- Tiimalasi-tehostin (leijuva esine) ---
+    function drawHourglassItem(glass) {
+      const cx = glass.x + glass.width / 2;
+      const cy = glass.y + glass.height / 2;
+      // Violetti hehku
+      ellipse(cx, cy, glass.width * 0.8, glass.width * 0.8, "rgba(206,147,216,0.5)");
+      ctx.save();
+      ctx.font = glass.width + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("⏳", cx, cy);
+      ctx.restore();
+    }
+
+    // --- Hidastuksen näkyminen: violetti sävy ja aikapalkki ---
+    function drawSlowEffect() {
+      // Kuinka vahvasti hidastus on päällä: 0 = ei yhtään, 1 = täysin
+      const strength = (1 - timeScale) / (1 - SLOW_FACTOR);
+      if (strength > 0.01) {
+        ctx.fillStyle = "rgba(103,58,183," + (0.18 * strength) + ")";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      if (slowTimer > 0) {
+        // Aikapalkki ylhäällä keskellä: lyhenee sitä mukaa kun aika kuluu
+        const barWidth = 200;
+        const left = canvas.width / 2 - barWidth / 2;
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(left, 14, barWidth, 12);
+        ctx.fillStyle = "#ce93d8";
+        ctx.fillRect(left, 14, barWidth * (slowTimer / SLOW_DURATION), 12);
+        ctx.font = "18px sans-serif";
+        ctx.textAlign = "right";
+        ctx.fillText("⏳", left - 6, 28);
+      }
+    }
+
     // --- Kilpi-tehostin (leijuva esine) ---
     function drawShieldItem(shield) {
       const x = shield.x;
@@ -954,6 +1176,14 @@
         drawShieldItem(shield);
       }
 
+      for (const fruit of fruits) {
+        drawFruit(fruit);
+      }
+
+      for (const glass of hourglasses) {
+        drawHourglassItem(glass);
+      }
+
       if (isDucked()) {
         // Kyykky: piirretään sama dodo, mutta litistettynä!
         // translate siirtää piirtokynän alkupisteen dodon jalkoihin,
@@ -968,6 +1198,12 @@
         drawDodo(player.x, player.y);
       }
       drawShieldBubble();
+
+      for (const t of floatingTexts) {
+        drawFloatingText(t);
+      }
+
+      drawSlowEffect();
 
       // Pisteet oikeaan yläkulmaan
       ctx.fillStyle = "#3e2723";
