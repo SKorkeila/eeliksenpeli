@@ -53,7 +53,8 @@
   <h1>🦤 Dodon saari 🔥</h1>
   <canvas id="peli" width="800" height="300"></canvas>
   <button id="shareButton" hidden>📤 Haasta kaveri</button>
-  <p>Hyppää: välilyönti, nuoli ylös tai klikkaa / napauta · Äänet päälle/pois: M tai 🔊-kuvake</p>
+  <p>Hyppää: välilyönti / nuoli ylös · Kyykky: nuoli alas / S (pidä pohjassa) · Äänet: M tai 🔊<br>
+     Puhelimessa: napauta oikeaa puolta = hyppy, pidä sormea vasemmalla puolella = kyykky</p>
 
   <script>
     // ============================================
@@ -76,6 +77,17 @@
     const MAX_SPEED = 15;         // Vauhti ei kasva tätä suuremmaksi
     const POINTS_PER_PIXEL = 0.1; // Pisteitä jokaisesta juostusta pikselistä
     const HIGHSCORE_KEY = "dodon-saari-ennatys"; // Nimi, jolla ennätys tallennetaan selaimeen
+
+    // --- Kyykky ---
+    const DUCK_HEIGHT = 24;      // Dodon korkeus kyykyssä (seisten PLAYER_SIZE = 44)
+    const FAST_FALL = 1.2;       // Lisäpainovoima, kun painaa alas ilmassa (nopea pudotus)
+
+    // --- Nuolet (lentävät esteet) ---
+    const ARROW_START_SCORE = 150; // Nuolia alkaa tulla vasta näiden pisteiden jälkeen
+    const ARROW_CHANCE = 0.3;      // Todennäköisyys, että este on nuoli eikä tulipallo
+    const ARROW_EXTRA_SPEED = 3;   // Nuolet lentävät näin paljon maata nopeammin
+    const ARROW_FLY_HEIGHT = 37;   // Kuinka korkealla maasta nuoli lentää (dodon pään korkeus)
+    const ARROW_LENGTH = 50;       // Nuolen pituus
 
     // --- Kilpi (tehostin) ---
     const SHIELD_CHANCE = 0.2;  // Todennäköisyys, että tulipallon jälkeen tulee kilpi (0.2 = 20 %)
@@ -138,6 +150,14 @@
     let newRecord = false;
     // Viimeisimmän pelin lopputulos (jakamista varten)
     let lastScore = 0;
+    // Painetaanko kyykkynappia juuri nyt?
+    let ducking = false;
+    // Mikä kosketus (sormi) pitää kyykkyä pohjassa – jotta tiedetään milloin se nousee
+    let duckPointerId = null;
+    // Mihin dodo kuoli: "fire" tai "arrow" (näytetään eri teksti)
+    let causeOfDeath = "fire";
+    // Onko laite kosketusnäytöllinen? Silloin piirretään vinkkinuolet hiekkaan.
+    const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
     // Ilmassa leijuvat kilvet, joita voi napata
     let shields = [];
     // Onko dodolla kilpi suojana?
@@ -238,6 +258,11 @@
       playTone(1500, 300, 0.3, "triangle", 0.35);
     }
 
+    // Nuoli lähtee: hiljainen laskeva "viuuh"
+    function playArrowSound() {
+      playTone(1400, 300, 0.35, "sine", 0.12);
+    }
+
     // Uusi ennätys: pieni fanfaari, neljä nousevaa nuottia (C–E–G–C)
     function playRecordSound() {
       const notes = [523, 659, 784, 1047];
@@ -274,8 +299,9 @@
     }
 
     // Kutsutaan kun peli päättyy: onko tulos paras tähän mennessä?
-    function endGame() {
+    function endGame(cause) {
       gameOver = true;
+      causeOfDeath = cause;
       playHitSound();
       const finalScore = Math.floor(score);
       lastScore = finalScore;
@@ -307,6 +333,7 @@
       shields = [];
       hasShield = false;
       shieldPopTimer = 0;
+      ducking = false;
     }
 
     // ============================================
@@ -333,9 +360,21 @@
         e.preventDefault(); // estää sivua vierimästä välilyönnillä
         jump();
       }
+      // Nuoli alas tai S: kyykky (niin kauan kuin nappi on pohjassa)
+      if (e.code === "ArrowDown" || e.code === "KeyS") {
+        e.preventDefault(); // estää sivua vierimästä alas
+        ducking = true;
+      }
       // M-näppäin: äänet päälle tai pois
       if (e.code === "KeyM") {
         soundOn = !soundOn; // ! kääntää: true → false ja false → true
+      }
+    });
+
+    // keyup = nappi päästetään irti → noustaan kyykystä
+    document.addEventListener("keyup", function (e) {
+      if (e.code === "ArrowDown" || e.code === "KeyS") {
+        ducking = false;
       }
     });
 
@@ -350,10 +389,24 @@
       const y = (e.clientY - rect.top) * (canvas.height / rect.height);
       if (x < 50 && y < 45) {
         soundOn = !soundOn;
+      } else if (e.pointerType === "touch" && x < canvas.width / 2 && !gameOver) {
+        // Puhelimessa vasen puoli = kyykky. Muistetaan, mikä sormi painaa.
+        ducking = true;
+        duckPointerId = e.pointerId;
       } else {
         jump();
       }
     });
+
+    // Kun kyykkysormi nostetaan (tai se liukuu pois ruudulta), noustaan ylös
+    function stopTouchDuck(e) {
+      if (e.pointerId === duckPointerId) {
+        ducking = false;
+        duckPointerId = null;
+      }
+    }
+    canvas.addEventListener("pointerup", stopTouchDuck);
+    canvas.addEventListener("pointercancel", stopTouchDuck);
 
     // ============================================
     //  Jakaminen: "Haasta kaveri" -nappi
@@ -394,15 +447,35 @@
     //  Tulipallojen luominen
     // ============================================
     function spawnObstacle() {
+      // Kun pisteitä on tarpeeksi, osa esteistä on nuolia
+      if (score > ARROW_START_SCORE && Math.random() < ARROW_CHANCE) {
+        obstacles.push({
+          type: "arrow",
+          x: canvas.width,
+          y: groundY - ARROW_FLY_HEIGHT - 4, // osumalaatikon yläreuna
+          width: ARROW_LENGTH,
+          height: 8                          // nuoli on ohut
+        });
+        playArrowSound();
+        return; // tämä este on valmis, tulipalloa ei tehdä
+      }
+
       const size = randomBetween(FIREBALL_MIN_SIZE, FIREBALL_MAX_SIZE);
       // Tulipallo on piirtäessä ympyrä, mutta törmäystä varten sitä
       // kohdellaan neliönä (x, y, width, height), kuten ennenkin.
       obstacles.push({
+        type: "fireball",
         x: canvas.width,     // syntyy ruudun oikeaan reunaan
         y: groundY - size,   // vierii hiekalla
         width: size,
         height: size
       });
+    }
+
+    // Onko dodo oikeasti kyykyssä? Kyykkyyn pääsee vain maassa –
+    // ilmassa alas-nappi tekee sen sijaan nopean pudotuksen.
+    function isDucked() {
+      return ducking && player.onGround;
     }
 
     // ============================================
@@ -429,6 +502,10 @@
       // --- Dodo ---
       // Painovoima kasvattaa putoamisnopeutta koko ajan
       player.vy += GRAVITY;
+      // Jos alas-nappi on pohjassa ilmassa, dodo putoaa nopeammin
+      if (ducking && !player.onGround) {
+        player.vy += FAST_FALL;
+      }
       // Nopeus siirtää dodoa
       player.y += player.vy;
 
@@ -488,7 +565,11 @@
 
       // --- Tulipallojen liikutus ---
       for (const obstacle of obstacles) {
-        obstacle.x -= speed;
+        if (obstacle.type === "arrow") {
+          obstacle.x -= speed + ARROW_EXTRA_SPEED; // nuolet ovat nopeampia
+        } else {
+          obstacle.x -= speed;
+        }
       }
       // Poistetaan ruudulta pois menneet tulipallot
       obstacles = obstacles.filter(o => o.x + o.width > 0);
@@ -496,12 +577,23 @@
       // --- Törmäys ---
       // Dodon osumalaatikko on vähän piirrettyä dodoa pienempi,
       // jotta "melkein osumat" eivät tunnu epäreiluilta.
-      const playerBox = {
-        x: player.x + 6,
-        y: player.y + 6,
-        width: PLAYER_SIZE - 12,
-        height: PLAYER_SIZE - 8
-      };
+      let playerBox;
+      if (isDucked()) {
+        // Kyykyssä dodo on matala: laatikko on maan rajassa ja vain DUCK_HEIGHT korkea
+        playerBox = {
+          x: player.x + 4,
+          y: groundY - DUCK_HEIGHT,
+          width: PLAYER_SIZE - 4,
+          height: DUCK_HEIGHT - 2
+        };
+      } else {
+        playerBox = {
+          x: player.x + 6,
+          y: player.y + 6,
+          width: PLAYER_SIZE - 12,
+          height: PLAYER_SIZE - 8
+        };
+      }
       // Kilven nappaus: osuuko dodo kilpeen?
       for (const shield of shields) {
         if (isColliding(playerBox, shield)) {
@@ -513,9 +605,9 @@
       shields = shields.filter(s => !s.taken);
 
       for (const obstacle of obstacles) {
-        // Myös tulipallon laatikkoa pienennetään, koska ympyrä ei täytä
-        // neliön kulmia.
-        const shrink = obstacle.width * 0.15;
+        // Tulipallon laatikkoa pienennetään, koska ympyrä ei täytä
+        // neliön kulmia. Nuoli on jo valmiiksi ohut, joten sitä ei pienennetä.
+        const shrink = obstacle.type === "arrow" ? 0 : obstacle.width * 0.15;
         const fireBox = {
           x: obstacle.x + shrink,
           y: obstacle.y + shrink,
@@ -530,8 +622,8 @@
             shieldPopTimer = 20;
             playShieldBreakSound();
           } else {
-            endGame();
-            return; // ei tarkisteta muita palloja, peli on jo ohi
+            endGame(obstacle.type === "arrow" ? "arrow" : "fire");
+            return; // ei tarkisteta muita esteitä, peli on jo ohi
           }
         }
       }
@@ -737,6 +829,52 @@
       ctx.fill();
     }
 
+    // --- Nuoli ---
+    function drawArrow(arrow) {
+      const x = arrow.x;
+      const cy = arrow.y + arrow.height / 2; // nuolen keskilinja
+      const len = arrow.width;
+
+      // Varsi: ruskea puutikku
+      ctx.fillStyle = "#795548";
+      ctx.fillRect(x + 10, cy - 1.5, len - 10, 3);
+
+      // Kärki vasemmalla (nuoli lentää vasemmalle): harmaa kolmio
+      ctx.fillStyle = "#9e9e9e";
+      ctx.beginPath();
+      ctx.moveTo(x, cy);           // terävä kärki
+      ctx.lineTo(x + 14, cy - 6);  // yläkulma
+      ctx.lineTo(x + 14, cy + 6);  // alakulma
+      ctx.fill();
+
+      // Sulat oikeassa päässä: kaksi punaista kolmiota
+      ctx.fillStyle = "#e53935";
+      ctx.beginPath();
+      ctx.moveTo(x + len - 12, cy);
+      ctx.lineTo(x + len, cy - 7);
+      ctx.lineTo(x + len - 4, cy);
+      ctx.lineTo(x + len, cy + 7);
+      ctx.fill();
+
+      // Vauhtiviivat nuolen takana
+      ctx.strokeStyle = "rgba(255,255,255,0.6)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + len + 6, cy - 4);  ctx.lineTo(x + len + 26, cy - 4);
+      ctx.moveTo(x + len + 10, cy + 4); ctx.lineTo(x + len + 34, cy + 4);
+      ctx.stroke();
+    }
+
+    // --- Vinkkinuolet hiekassa (vain kosketusnäytöillä) ---
+    function drawTouchHints() {
+      ctx.fillStyle = "rgba(62,39,35,0.4)";
+      ctx.font = "bold 24px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("⬇ pidä = kyykky", 12, canvas.height - 14);
+      ctx.textAlign = "right";
+      ctx.fillText("napauta = hyppy ⬆", canvas.width - 12, canvas.height - 14);
+    }
+
     // --- Kilpi-tehostin (leijuva esine) ---
     function drawShieldItem(shield) {
       const x = shield.x;
@@ -767,7 +905,8 @@
     // --- Suojakupla dodon ympärillä ---
     function drawShieldBubble() {
       const cx = player.x + PLAYER_SIZE / 2 + 4;
-      const cy = player.y + PLAYER_SIZE / 2;
+      // Kyykyssä kupla laskeutuu matalamman dodon kohdalle
+      const cy = isDucked() ? groundY - DUCK_HEIGHT / 2 - 6 : player.y + PLAYER_SIZE / 2;
       if (hasShield) {
         // Kupla "sykkii": koko vaihtelee vähän Math.sinin avulla
         const r = 32 + Math.sin(frame * 0.15) * 2;
@@ -800,14 +939,34 @@
       drawGround();
 
       for (const obstacle of obstacles) {
-        drawFireball(obstacle);
+        if (obstacle.type === "arrow") {
+          drawArrow(obstacle);
+        } else {
+          drawFireball(obstacle);
+        }
+      }
+
+      if (isTouchDevice && !gameOver) {
+        drawTouchHints();
       }
 
       for (const shield of shields) {
         drawShieldItem(shield);
       }
 
-      drawDodo(player.x, player.y);
+      if (isDucked()) {
+        // Kyykky: piirretään sama dodo, mutta litistettynä!
+        // translate siirtää piirtokynän alkupisteen dodon jalkoihin,
+        // scale venyttää: leveys 1.15-kertaiseksi, korkeus matalaksi.
+        // save/restore palauttaa kynän normaaliksi piirtämisen jälkeen.
+        ctx.save();
+        ctx.translate(player.x, groundY);
+        ctx.scale(1.15, DUCK_HEIGHT / PLAYER_SIZE);
+        drawDodo(0, -PLAYER_SIZE);
+        ctx.restore();
+      } else {
+        drawDodo(player.x, player.y);
+      }
       drawShieldBubble();
 
       // Pisteet oikeaan yläkulmaan
@@ -832,7 +991,8 @@
         ctx.fillStyle = "white";
         ctx.textAlign = "center";
         ctx.font = "bold 48px sans-serif";
-        ctx.fillText("DODO PALOI! 🔥", canvas.width / 2, canvas.height / 2 - 30);
+        const title = causeOfDeath === "arrow" ? "NUOLI OSUI! 🏹" : "DODO PALOI! 🔥";
+        ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 30);
         ctx.font = "bold 28px sans-serif";
         if (newRecord) {
           // Vilkkuva juhlateksti: frame-laskurin avulla teksti näkyy
