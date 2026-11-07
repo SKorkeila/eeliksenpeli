@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dodon saari – Eeliksen peli</title>
+  <!-- Nämä tiedot näkyvät, kun linkin jakaa esim. WhatsAppissa tai Discordissa -->
+  <meta name="description" content="Auta dodoa väistelemään tulivuoren tulipalloja! Pystytkö lyömään ennätykseni?">
+  <meta property="og:title" content="🦤 Dodon saari 🔥">
+  <meta property="og:description" content="Auta dodoa väistelemään tulivuoren tulipalloja! Pystytkö lyömään ennätykseni?">
   <style>
     /* Sivun ulkoasu: tumma tausta ja peli keskellä */
     body {
@@ -21,15 +25,35 @@
     canvas {
       border: 4px solid #f4d58d;
       border-radius: 8px;
-      max-width: 100%;
+      box-sizing: border-box; /* reunaviiva lasketaan mukaan leveyteen */
+      max-width: 100%;        /* kapealla puhelimella peli kutistuu ruutuun */
+      height: auto;           /* ...ja korkeus kutistuu samassa suhteessa */
+      touch-action: manipulation; /* estää puhelinta zoomaamasta tuplanapautuksesta */
+      user-select: none;
     }
-    p { opacity: 0.7; }
+    p { opacity: 0.7; text-align: center; padding: 0 16px; }
+    /* Jakonappi */
+    #shareButton {
+      margin-top: 12px;
+      padding: 12px 24px;
+      font-size: 18px;
+      font-weight: bold;
+      color: #3e2723;
+      background: #ffd54f;
+      border: none;
+      border-radius: 999px; /* täysin pyöreät päädyt */
+      cursor: pointer;
+    }
+    #shareButton:hover { background: #ffca28; }
+    /* hidden-attribuutti piilottaa napin, kun peli on käynnissä */
+    #shareButton[hidden] { display: none; }
   </style>
 </head>
 <body>
   <h1>🦤 Dodon saari 🔥</h1>
   <canvas id="peli" width="800" height="300"></canvas>
-  <p>Hyppää: välilyönti, nuoli ylös tai klikkaa / napauta · Äänet päälle/pois: M</p>
+  <button id="shareButton" hidden>📤 Haasta kaveri</button>
+  <p>Hyppää: välilyönti, nuoli ylös tai klikkaa / napauta · Äänet päälle/pois: M tai 🔊-kuvake</p>
 
   <script>
     // ============================================
@@ -112,6 +136,8 @@
     let highScore = loadHighScore();
     // Tuliko viime pelissä uusi ennätys? Tällä näytetään juhlateksti.
     let newRecord = false;
+    // Viimeisimmän pelin lopputulos (jakamista varten)
+    let lastScore = 0;
     // Ilmassa leijuvat kilvet, joita voi napata
     let shields = [];
     // Onko dodolla kilpi suojana?
@@ -252,6 +278,8 @@
       gameOver = true;
       playHitSound();
       const finalScore = Math.floor(score);
+      lastScore = finalScore;
+      shareButton.hidden = false; // näytetään jakonappi
       if (finalScore > highScore) {
         highScore = finalScore;
         saveHighScore(highScore);
@@ -266,6 +294,7 @@
     //  Uusi peli: palautetaan kaikki alkutilaan
     // ============================================
     function resetGame() {
+      shareButton.hidden = true; // piilotetaan jakonappi pelin ajaksi
       player.y = groundY - PLAYER_SIZE;
       player.vy = 0;
       player.onGround = true;
@@ -311,7 +340,55 @@
     });
 
     // Hiiri ja kosketusnäyttö
-    canvas.addEventListener("pointerdown", jump);
+    // Jos napautus osuu vasemman yläkulman 🔊-kuvakkeeseen, vaihdetaan äänet.
+    // Muuten hypätään. (Puhelimessa ei ole M-näppäintä!)
+    canvas.addEventListener("pointerdown", function (e) {
+      // Canvas voi olla ruudulla pienempi kuin 800 px (esim. puhelimessa),
+      // joten muutetaan napautuksen kohta pelin omiksi koordinaateiksi.
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+      if (x < 50 && y < 45) {
+        soundOn = !soundOn;
+      } else {
+        jump();
+      }
+    });
+
+    // ============================================
+    //  Jakaminen: "Haasta kaveri" -nappi
+    // ============================================
+    const shareButton = document.getElementById("shareButton");
+
+    shareButton.addEventListener("click", async function () {
+      shareButton.blur(); // ettei välilyönti "paina" nappia uudestaan
+      const text = "Sain " + lastScore + " pistettä Dodon saaressa! 🦤🔥 Pystytkö parempaan?";
+      const url = location.href; // tämän sivun osoite
+
+      // Puhelimissa on valmis jakovalikko (WhatsApp, Snapchat, viestit...).
+      // navigator.share avaa sen – jos selain tukee sitä.
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: "Dodon saari", text: text, url: url });
+        } catch (e) {
+          // Käyttäjä sulki jakovalikon – ei haittaa
+        }
+        return;
+      }
+
+      // Tietokoneella kopioidaan teksti leikepöydälle, josta sen voi liittää
+      // (Ctrl+V) mihin tahansa viestiin.
+      try {
+        await navigator.clipboard.writeText(text + " " + url);
+        shareButton.textContent = "✅ Kopioitu! Liitä viestiin (Ctrl+V)";
+      } catch (e) {
+        shareButton.textContent = "❌ Kopiointi ei onnistunut";
+      }
+      // 2,5 sekunnin päästä palautetaan napin alkuperäinen teksti
+      setTimeout(function () {
+        shareButton.textContent = "📤 Haasta kaveri";
+      }, 2500);
+    });
 
     // ============================================
     //  Tulipallojen luominen
