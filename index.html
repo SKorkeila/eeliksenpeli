@@ -100,6 +100,11 @@
     const SHIELD_SIZE = 30;     // Kilven koko
     const SHIELD_HEIGHT = 95;   // Kuinka korkealla maasta kilpi leijuu (pitää hypätä!)
 
+    // --- Hidastus (tehostin) ---
+    const SLOW_CHANCE = 0.12;   // Todennäköisyys, että esteen perään tulee tiimalasi
+    const SLOW_DURATION = 300;  // Kuinka kauan hidastus kestää (ruutuina, 60 = 1 sekunti)
+    const SLOW_FACTOR = 0.5;    // Kuinka hitaaksi maailma muuttuu (0.5 = puolet normaalista)
+
     // --- Äänet ---
     const VOLUME = 0.5;          // Äänenvoimakkuus: 0 = hiljaa, 1 = täysillä
     const MILESTONE_EVERY = 100; // Kuinka monen pisteen välein soi "pling"
@@ -168,6 +173,13 @@
     let fruits = [];
     // Leijuvat "+25"-tekstit, jotka näkyvät kun hedelmän nappaa
     let floatingTexts = [];
+    // Ilmassa leijuvat tiimalasit (hidastustehostin)
+    let hourglasses = [];
+    // Montako ruutua hidastusta on vielä jäljellä (0 = ei hidastusta)
+    let slowTimer = 0;
+    // Maailman nopeuskerroin: 1 = normaali, SLOW_FACTOR = hidastettu.
+    // Kaikki liike kerrotaan tällä luvulla!
+    let timeScale = 1;
     // Ilmassa leijuvat kilvet, joita voi napata
     let shields = [];
     // Onko dodolla kilpi suojana?
@@ -270,6 +282,16 @@
       playTone(freq, freq * 1.5, 0.1, "square", 0.1);
     }
 
+    // Hidastus alkaa: pitkä laskeva "wuuuuu" (kuin nauha hidastuisi)
+    function playSlowStartSound() {
+      playTone(900, 150, 0.8, "sine", 0.3);
+    }
+
+    // Hidastus loppuu: nouseva "wiiip" takaisin normaaliin
+    function playSlowEndSound() {
+      playTone(200, 900, 0.4, "sine", 0.25);
+    }
+
     // Kilpi särkyy: kirkas "kling" joka laskee
     function playShieldBreakSound() {
       playTone(1500, 300, 0.3, "triangle", 0.35);
@@ -353,6 +375,9 @@
       ducking = false;
       fruits = [];
       floatingTexts = [];
+      hourglasses = [];
+      slowTimer = 0;
+      timeScale = 1;
     }
 
     // ============================================
@@ -568,11 +593,26 @@
         player.onGround = true;
       }
 
+      // --- Hidastus ---
+      if (slowTimer > 0) {
+        slowTimer--;
+        if (slowTimer === 0) playSlowEndSound();
+      }
+      // Mihin timeScale on menossa: hidastettuna SLOW_FACTOR, muuten 1
+      const targetScale = slowTimer > 0 ? SLOW_FACTOR : 1;
+      // Ei hypätä suoraan, vaan liu'utaan pehmeästi: joka ruudulla siirrytään
+      // 8 % jäljellä olevasta matkasta. Siksi hidastus "jarruttaa" sulavasti.
+      timeScale += (targetScale - timeScale) * 0.08;
+
+      // move = kuinka monta pikseliä maailma liikkuu tällä ruudulla.
+      // Dodon hypyt EIVÄT hidastu – vain maailma. Dodo on hetken supernopea!
+      const move = speed * timeScale;
+
       // --- Vauhti ja pisteet ---
       // Vauhti kasvaa vähän joka ruudulla, mutta ei yli MAX_SPEEDin.
-      speed = Math.min(speed + SPEED_INCREASE, MAX_SPEED);
-      score += speed * POINTS_PER_PIXEL;
-      distance += speed;
+      speed = Math.min(speed + SPEED_INCREASE * timeScale, MAX_SPEED);
+      score += move * POINTS_PER_PIXEL;
+      distance += move;
 
       // Soitetaan "pling" aina kun ylitetään uusi MILESTONE_EVERY-raja
       const milestone = Math.floor(score / MILESTONE_EVERY);
@@ -582,7 +622,7 @@
       }
 
       // --- Uudet tulipallot ---
-      nextObstacleIn--;
+      nextObstacleIn -= timeScale; // hidastettuna esteitä tulee harvemmin
       if (nextObstacleIn <= 0) {
         spawnObstacle();
         nextObstacleIn = randomBetween(MIN_GAP, MAX_GAP);
@@ -605,6 +645,19 @@
           });
         }
 
+        // Tai tiimalasi (jos hidastus ei ole jo päällä)
+        if (!shieldSpawned && slowTimer === 0 && hourglasses.length === 0 &&
+            Math.random() < SLOW_CHANCE) {
+          shieldSpawned = true; // (tämäkin estää hedelmät samaan väliin)
+          hourglasses.push({
+            x: canvas.width + (nextObstacleIn * speed) / 2,
+            baseY: groundY - SHIELD_HEIGHT - SHIELD_SIZE / 2,
+            y: 0,
+            width: SHIELD_SIZE,
+            height: SHIELD_SIZE
+          });
+        }
+
         // Muulloin esteiden väliin voi tulla hedelmärivi
         if (!shieldSpawned && Math.random() < FRUIT_CHANCE) {
           spawnFruitRow();
@@ -613,7 +666,7 @@
 
       // --- Hedelmien liikutus ---
       for (const fruit of fruits) {
-        fruit.x -= speed;
+        fruit.x -= move;
       }
       fruits = fruits.filter(f => f.x + f.width > 0);
 
@@ -626,11 +679,18 @@
 
       // --- Kilpien liikutus ---
       for (const shield of shields) {
-        shield.x -= speed;
+        shield.x -= move;
         // Math.sin tekee aaltoliikettä: kilpi keinuu ylös ja alas
         shield.y = shield.baseY + Math.sin(frame * 0.1) * 6;
       }
       shields = shields.filter(s => s.x + s.width > 0);
+
+      // --- Tiimalasien liikutus ---
+      for (const glass of hourglasses) {
+        glass.x -= move;
+        glass.y = glass.baseY + Math.sin(frame * 0.1) * 6;
+      }
+      hourglasses = hourglasses.filter(g => g.x + g.width > 0);
 
       // Kilven särkymisanimaatio etenee
       if (shieldPopTimer > 0) shieldPopTimer--;
@@ -638,9 +698,9 @@
       // --- Tulipallojen liikutus ---
       for (const obstacle of obstacles) {
         if (obstacle.type === "arrow") {
-          obstacle.x -= speed + ARROW_EXTRA_SPEED; // nuolet ovat nopeampia
+          obstacle.x -= (speed + ARROW_EXTRA_SPEED) * timeScale; // nuolet ovat nopeampia
         } else {
-          obstacle.x -= speed;
+          obstacle.x -= move;
         }
       }
       // Poistetaan ruudulta pois menneet tulipallot
@@ -675,6 +735,16 @@
         }
       }
       shields = shields.filter(s => !s.taken);
+
+      // Tiimalasin nappaus: hidastus alkaa!
+      for (const glass of hourglasses) {
+        if (isColliding(playerBox, glass)) {
+          glass.taken = true;
+          slowTimer = SLOW_DURATION;
+          playSlowStartSound();
+        }
+      }
+      hourglasses = hourglasses.filter(g => !g.taken);
 
       // Hedelmien nappaus: lisäpisteitä!
       for (const fruit of fruits) {
@@ -991,6 +1061,42 @@
       ctx.restore();
     }
 
+    // --- Tiimalasi-tehostin (leijuva esine) ---
+    function drawHourglassItem(glass) {
+      const cx = glass.x + glass.width / 2;
+      const cy = glass.y + glass.height / 2;
+      // Violetti hehku
+      ellipse(cx, cy, glass.width * 0.8, glass.width * 0.8, "rgba(206,147,216,0.5)");
+      ctx.save();
+      ctx.font = glass.width + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("⏳", cx, cy);
+      ctx.restore();
+    }
+
+    // --- Hidastuksen näkyminen: violetti sävy ja aikapalkki ---
+    function drawSlowEffect() {
+      // Kuinka vahvasti hidastus on päällä: 0 = ei yhtään, 1 = täysin
+      const strength = (1 - timeScale) / (1 - SLOW_FACTOR);
+      if (strength > 0.01) {
+        ctx.fillStyle = "rgba(103,58,183," + (0.18 * strength) + ")";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      if (slowTimer > 0) {
+        // Aikapalkki ylhäällä keskellä: lyhenee sitä mukaa kun aika kuluu
+        const barWidth = 200;
+        const left = canvas.width / 2 - barWidth / 2;
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(left, 14, barWidth, 12);
+        ctx.fillStyle = "#ce93d8";
+        ctx.fillRect(left, 14, barWidth * (slowTimer / SLOW_DURATION), 12);
+        ctx.font = "18px sans-serif";
+        ctx.textAlign = "right";
+        ctx.fillText("⏳", left - 6, 28);
+      }
+    }
+
     // --- Kilpi-tehostin (leijuva esine) ---
     function drawShieldItem(shield) {
       const x = shield.x;
@@ -1074,6 +1180,10 @@
         drawFruit(fruit);
       }
 
+      for (const glass of hourglasses) {
+        drawHourglassItem(glass);
+      }
+
       if (isDucked()) {
         // Kyykky: piirretään sama dodo, mutta litistettynä!
         // translate siirtää piirtokynän alkupisteen dodon jalkoihin,
@@ -1092,6 +1202,8 @@
       for (const t of floatingTexts) {
         drawFloatingText(t);
       }
+
+      drawSlowEffect();
 
       // Pisteet oikeaan yläkulmaan
       ctx.fillStyle = "#3e2723";

@@ -7,8 +7,11 @@ Selainpeli, jossa dodo-lintu juoksee saarella ja väistelee tulivuoren tulipallo
 Avaa `index.html` selaimessa – asennuksia ei tarvita.
 
 - **Hyppää:** välilyönti, nuoli ylös tai klikkaa / napauta
+- **Kyykky:** nuoli alas / S (puhelimessa: pidä sormea vasemmalla puolella)
 - **Äänet päälle/pois:** M tai 🔊-kuvake
 - **Kilpi 🛡️:** nappaa hyppäämällä – suojaa yhdeltä tulipallolta
+- **Tiimalasi ⏳:** hidastaa maailman hetkeksi
+- **Hedelmät 🍌🥭🍍:** +25 pistettä kappale
 
 ## Tehty vaiheittain
 
