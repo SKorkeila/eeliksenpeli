@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Eeliksen peli</title>
+  <title>Dodon saari – Eeliksen peli</title>
   <style>
     /* Sivun ulkoasu: tumma tausta ja peli keskellä */
     body {
       margin: 0;
-      background: #222;
+      background: #1b2838;
       color: white;
       font-family: sans-serif;
       display: flex;
@@ -19,15 +19,15 @@
     }
     /* Pelialue (canvas = "piirustuspaperi", jolle peli piirretään) */
     canvas {
-      background: #87ceeb; /* taivaansininen */
-      border: 4px solid white;
+      border: 4px solid #f4d58d;
+      border-radius: 8px;
       max-width: 100%;
     }
     p { opacity: 0.7; }
   </style>
 </head>
 <body>
-  <h1>Eeliksen peli</h1>
+  <h1>🦤 Dodon saari 🔥</h1>
   <canvas id="peli" width="800" height="300"></canvas>
   <p>Hyppää: välilyönti, nuoli ylös tai klikkaa / napauta</p>
 
@@ -35,26 +35,35 @@
     // ============================================
     //  SÄÄDETTÄVÄT ARVOT – kokeile muuttaa näitä!
     // ============================================
-    const GRAVITY = 0.6;         // Painovoima: kuinka nopeasti hahmo putoaa alas
-    const JUMP_POWER = 12;       // Hypyn voima: kuinka korkealle hahmo hyppää
-    const PLAYER_SIZE = 40;      // Hahmon koko pikseleinä
-    const PLAYER_COLOR = "#ff4757"; // Hahmon väri
-    const GROUND_HEIGHT = 50;    // Maan paksuus ruudun alareunassa
-    const GROUND_COLOR = "#2ed573"; // Maan väri
+    const GRAVITY = 0.6;         // Painovoima: kuinka nopeasti dodo putoaa alas
+    const JUMP_POWER = 12;       // Hypyn voima: kuinka korkealle dodo hyppää
+    const PLAYER_SIZE = 44;      // Dodon koko pikseleinä
+    const GROUND_HEIGHT = 50;    // Hiekkarannan paksuus ruudun alareunassa
 
-    // --- Esteet ---
-    const OBSTACLE_WIDTH = 30;     // Esteen leveys
-    const OBSTACLE_MIN_HEIGHT = 30; // Matalin mahdollinen este
-    const OBSTACLE_MAX_HEIGHT = 70; // Korkein mahdollinen este
-    const OBSTACLE_COLOR = "#2f3542"; // Esteen väri
-    const MIN_GAP = 60;  // Lyhin aika (ruutuina) kahden esteen välillä
-    const MAX_GAP = 130; // Pisin aika (ruutuina) kahden esteen välillä
+    // --- Tulipallot (esteet) ---
+    const FIREBALL_MIN_SIZE = 30; // Pienimmän tulipallon halkaisija
+    const FIREBALL_MAX_SIZE = 60; // Suurimman tulipallon halkaisija
+    const MIN_GAP = 60;  // Lyhin aika (ruutuina) kahden tulipallon välillä
+    const MAX_GAP = 130; // Pisin aika (ruutuina) kahden tulipallon välillä
 
     // --- Vauhti ja pisteet ---
     const START_SPEED = 6;        // Vauhti pelin alussa (pikseliä per ruutu)
     const SPEED_INCREASE = 0.003; // Kuinka paljon vauhti kasvaa joka ruudulla
     const MAX_SPEED = 15;         // Vauhti ei kasva tätä suuremmaksi
     const POINTS_PER_PIXEL = 0.1; // Pisteitä jokaisesta juostusta pikselistä
+
+    // --- Värit (teema) ---
+    const DODO_BODY = "#8a94a6";   // Dodon höyhenet
+    const DODO_WING = "#6b7486";   // Siipi (vähän tummempi)
+    const DODO_BEAK = "#e8c46a";   // Nokka
+    const DODO_LEGS = "#f0a030";   // Jalat
+    const SKY_TOP = "#4fc3f7";     // Taivas ylhäällä
+    const SKY_BOTTOM = "#ffe0b2";  // Taivas horisontissa
+    const SEA_COLOR = "#1e88e5";   // Meri
+    const SAND_COLOR = "#f4d58d";  // Hiekka
+    const VOLCANO_COLOR = "#6d4c41"; // Tulivuori
+    const PALM_TRUNK = "#8d6e63";  // Palmun runko
+    const PALM_LEAVES = "#2e7d32"; // Palmun lehdet
 
     // ============================================
     //  Pelin valmistelu
@@ -64,18 +73,20 @@
 
     // Maan yläreunan korkeus (y-koordinaatti). Huom: canvasissa y kasvaa ALASPÄIN!
     const groundY = canvas.height - GROUND_HEIGHT;
+    // Horisontti: kohta jossa meri ja taivas kohtaavat
+    const horizonY = 190;
 
-    // Hahmo on olio, jolla on sijainti (x, y) ja pystynopeus (vy)
+    // Dodo on olio, jolla on sijainti (x, y) ja pystynopeus (vy)
     const player = {
       x: 80,
       y: groundY - PLAYER_SIZE, // seisoo maan päällä
       vy: 0,                    // pystysuuntainen nopeus (negatiivinen = ylöspäin)
-      onGround: true            // onko hahmo maassa?
+      onGround: true            // onko dodo maassa?
     };
 
-    // Lista (taulukko) kaikista ruudulla olevista esteistä
+    // Lista (taulukko) kaikista ruudulla olevista tulipalloista
     let obstacles = [];
-    // Laskuri: montako ruutua seuraavaan esteeseen
+    // Laskuri: montako ruutua seuraavaan tulipalloon
     let nextObstacleIn = 60;
     // Onko peli päättynyt?
     let gameOver = false;
@@ -83,6 +94,10 @@
     let speed = START_SPEED;
     // Pisteet (desimaalilukuna, näytetään pyöristettynä)
     let score = 0;
+    // Kuinka pitkän matkan olemme kulkeneet. Tällä liikutetaan taustaa.
+    let distance = 0;
+    // Ruutulaskuri animaatioita varten (esim. jalkojen liike)
+    let frame = 0;
 
     // Apufunktio: arpoo kokonaisluvun väliltä min–max
     function randomBetween(min, max) {
@@ -113,6 +128,7 @@
         return;
       }
       // Hypätä saa vain maasta, ettei voi lentää ilmassa loputtomasti
+      // (dodot eivät oikeastikaan osanneet lentää!)
       if (player.onGround) {
         player.vy = -JUMP_POWER; // miinus = ylöspäin
         player.onGround = false;
@@ -131,15 +147,17 @@
     canvas.addEventListener("pointerdown", jump);
 
     // ============================================
-    //  Esteiden luominen
+    //  Tulipallojen luominen
     // ============================================
     function spawnObstacle() {
-      const height = randomBetween(OBSTACLE_MIN_HEIGHT, OBSTACLE_MAX_HEIGHT);
+      const size = randomBetween(FIREBALL_MIN_SIZE, FIREBALL_MAX_SIZE);
+      // Tulipallo on piirtäessä ympyrä, mutta törmäystä varten sitä
+      // kohdellaan neliönä (x, y, width, height), kuten ennenkin.
       obstacles.push({
-        x: canvas.width,          // syntyy ruudun oikeaan reunaan
-        y: groundY - height,      // seisoo maan päällä
-        width: OBSTACLE_WIDTH,
-        height: height
+        x: canvas.width,     // syntyy ruudun oikeaan reunaan
+        y: groundY - size,   // vierii hiekalla
+        width: size,
+        height: size
       });
     }
 
@@ -159,16 +177,18 @@
     //  Päivitys: liikutetaan asioita joka ruudunpäivityksellä
     // ============================================
     function update() {
-      // Kun peli on ohi, mikään ei liiku
+      frame++; // animaatiot (liekit) liikkuvat aina, myös pelin loputtua
+
+      // Kun peli on ohi, mikään muu ei liiku
       if (gameOver) return;
 
-      // --- Hahmo ---
+      // --- Dodo ---
       // Painovoima kasvattaa putoamisnopeutta koko ajan
       player.vy += GRAVITY;
-      // Nopeus siirtää hahmoa
+      // Nopeus siirtää dodoa
       player.y += player.vy;
 
-      // Jos hahmo menisi maan sisään, pysäytetään se maan pinnalle
+      // Jos dodo menisi maan sisään, pysäytetään se maan pinnalle
       if (player.y >= groundY - PLAYER_SIZE) {
         player.y = groundY - PLAYER_SIZE;
         player.vy = 0;
@@ -177,72 +197,265 @@
 
       // --- Vauhti ja pisteet ---
       // Vauhti kasvaa vähän joka ruudulla, mutta ei yli MAX_SPEEDin.
-      // Math.min valitsee kahdesta luvusta pienemmän.
       speed = Math.min(speed + SPEED_INCREASE, MAX_SPEED);
-      // Mitä nopeammin juostaan, sitä nopeammin pisteitä kertyy
       score += speed * POINTS_PER_PIXEL;
+      distance += speed;
 
-      // --- Uudet esteet ---
-      nextObstacleIn--; // lasketaan alaspäin joka ruudulla
+      // --- Uudet tulipallot ---
+      nextObstacleIn--;
       if (nextObstacleIn <= 0) {
         spawnObstacle();
-        nextObstacleIn = randomBetween(MIN_GAP, MAX_GAP); // arvotaan seuraava väli
+        nextObstacleIn = randomBetween(MIN_GAP, MAX_GAP);
       }
 
-      // --- Esteiden liikutus ---
+      // --- Tulipallojen liikutus ---
       for (const obstacle of obstacles) {
-        obstacle.x -= speed; // liikkuu vasemmalle nykyisellä vauhdilla
+        obstacle.x -= speed;
       }
-
-      // Poistetaan esteet, jotka ovat menneet kokonaan ruudun vasemmalta ulos
+      // Poistetaan ruudulta pois menneet tulipallot
       obstacles = obstacles.filter(o => o.x + o.width > 0);
 
       // --- Törmäys ---
-      // Tehdään hahmosta suorakulmio-olio, jotta sitä voi verrata esteisiin.
-      // Pienennetään sitä vähän (4 px joka reunalta), jotta "melkein osumat"
-      // eivät tunnu epäreiluilta.
+      // Dodon osumalaatikko on vähän piirrettyä dodoa pienempi,
+      // jotta "melkein osumat" eivät tunnu epäreiluilta.
       const playerBox = {
-        x: player.x + 4,
-        y: player.y + 4,
-        width: PLAYER_SIZE - 8,
+        x: player.x + 6,
+        y: player.y + 6,
+        width: PLAYER_SIZE - 12,
         height: PLAYER_SIZE - 8
       };
       for (const obstacle of obstacles) {
-        if (isColliding(playerBox, obstacle)) {
+        // Myös tulipallon laatikkoa pienennetään, koska ympyrä ei täytä
+        // neliön kulmia.
+        const shrink = obstacle.width * 0.15;
+        const fireBox = {
+          x: obstacle.x + shrink,
+          y: obstacle.y + shrink,
+          width: obstacle.width - shrink * 2,
+          height: obstacle.height - shrink * 2
+        };
+        if (isColliding(playerBox, fireBox)) {
           gameOver = true;
         }
       }
     }
 
     // ============================================
-    //  Piirtäminen
+    //  Piirtäminen: apufunktiot
     // ============================================
-    function draw() {
-      // Tyhjennetään koko ruutu ennen uutta piirtoa
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Maa
-      ctx.fillStyle = GROUND_COLOR;
-      ctx.fillRect(0, groundY, canvas.width, GROUND_HEIGHT);
+    // Piirtää täytetyn ellipsin (soikion). Käytetään paljon dodossa.
+    function ellipse(x, y, radiusX, radiusY, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
-      // Esteet
-      ctx.fillStyle = OBSTACLE_COLOR;
-      for (const obstacle of obstacles) {
-        ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+    // Toistuva tausta-asia (pilvet, palmut): laskee x-kohdan niin, että
+    // asiat liukuvat vasemmalle ja ilmestyvät uudestaan oikealta.
+    // "factor" kertoo kuinka nopeasti: pieni luku = kaukana = liikkuu hitaasti.
+    // Tätä kutsutaan nimellä PARALLAKSI.
+    function scrollX(index, spacing, factor) {
+      const shift = (distance * factor) % spacing; // % = jakojäännös
+      return index * spacing - shift;
+    }
+
+    // --- Taivas, aurinko ja tulivuori ---
+    function drawSky() {
+      // Liukuväri ylhäältä alas
+      const gradient = ctx.createLinearGradient(0, 0, 0, horizonY);
+      gradient.addColorStop(0, SKY_TOP);
+      gradient.addColorStop(1, SKY_BOTTOM);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, horizonY);
+
+      // Aurinko
+      ellipse(120, 60, 30, 30, "#fff59d");
+
+      // Pilvet (liikkuvat hitaasti)
+      for (let i = 0; i < 4; i++) {
+        const x = scrollX(i, 280, 0.1);
+        const y = 40 + (i % 2) * 30;
+        ellipse(x, y, 30, 12, "rgba(255,255,255,0.8)");
+        ellipse(x + 25, y - 6, 22, 12, "rgba(255,255,255,0.8)");
+        ellipse(x + 45, y, 25, 10, "rgba(255,255,255,0.8)");
       }
 
-      // Hahmo (toistaiseksi neliö)
-      ctx.fillStyle = PLAYER_COLOR;
-      ctx.fillRect(player.x, player.y, PLAYER_SIZE, PLAYER_SIZE);
+      // Tulivuori taustalla – täältä tulipallot tulevat!
+      ctx.fillStyle = VOLCANO_COLOR;
+      ctx.beginPath();
+      ctx.moveTo(500, horizonY);  // vasen alakulma
+      ctx.lineTo(610, 95);        // huipun vasen reuna
+      ctx.lineTo(650, 95);        // huipun oikea reuna
+      ctx.lineTo(780, horizonY);  // oikea alakulma
+      ctx.fill();
+      // Laavaa huipulla
+      ctx.fillStyle = "#ff7043";
+      ctx.beginPath();
+      ctx.moveTo(610, 95);
+      ctx.lineTo(650, 95);
+      ctx.lineTo(640, 115);
+      ctx.lineTo(625, 105);
+      ctx.lineTo(615, 115);
+      ctx.fill();
+      // Savupilvet, jotka nousevat ja haalistuvat
+      for (let i = 0; i < 3; i++) {
+        const rise = (frame * 0.4 + i * 30) % 90; // 0–90, alkaa alusta
+        const alpha = 0.5 * (1 - rise / 90);       // haalistuu noustessa
+        ellipse(630 + rise * 0.3, 85 - rise, 12 + rise * 0.2, 9 + rise * 0.15,
+                "rgba(90,90,90," + alpha + ")");
+      }
+    }
 
-      // Silmä, jotta neliö näyttää vähän hahmolta :)
-      ctx.fillStyle = "white";
-      ctx.fillRect(player.x + 24, player.y + 8, 10, 10);
-      ctx.fillStyle = "black";
-      ctx.fillRect(player.x + 29, player.y + 11, 5, 5);
+    // --- Meri ---
+    function drawSea() {
+      ctx.fillStyle = SEA_COLOR;
+      ctx.fillRect(0, horizonY, canvas.width, groundY - horizonY);
+      // Vaaleat aallot, jotka liikkuvat hitaasti
+      ctx.fillStyle = "rgba(255,255,255,0.4)";
+      for (let i = 0; i < 12; i++) {
+        const x = scrollX(i, 80, 0.3);
+        ctx.fillRect(x, horizonY + 15 + (i % 3) * 14, 30, 3);
+      }
+    }
 
-      // Pisteet oikeaan yläkulmaan. Math.floor pyöristää alaspäin kokonaisluvuksi.
-      ctx.fillStyle = "#2f3542";
+    // --- Palmut ---
+    function drawPalms() {
+      for (let i = 0; i < 4; i++) {
+        const x = scrollX(i, 260, 0.5) + 60;
+        const baseY = groundY + 5;
+        // Runko: hieman kalteva paksu viiva
+        ctx.strokeStyle = PALM_TRUNK;
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(x, baseY);
+        ctx.quadraticCurveTo(x + 10, baseY - 50, x + 5, baseY - 100);
+        ctx.stroke();
+        // Lehdet: viisi soikiota eri kulmissa
+        ctx.fillStyle = PALM_LEAVES;
+        for (let k = 0; k < 5; k++) {
+          const angle = -Math.PI + k * (Math.PI / 4); // puoliympyrä
+          ctx.beginPath();
+          ctx.ellipse(x + 5 + Math.cos(angle) * 20, baseY - 100 + Math.sin(angle) * 8,
+                      24, 6, angle, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Kookospähkinät
+        ellipse(x + 2, baseY - 96, 4, 4, "#5d4037");
+        ellipse(x + 9, baseY - 95, 4, 4, "#5d4037");
+      }
+    }
+
+    // --- Hiekkaranta ---
+    function drawGround() {
+      ctx.fillStyle = SAND_COLOR;
+      ctx.fillRect(0, groundY, canvas.width, GROUND_HEIGHT);
+      // Pienet tummat pisteet liikkuvat täydellä vauhdilla,
+      // jotta näkee kuinka kovaa dodo juoksee
+      ctx.fillStyle = "#d9b866";
+      for (let i = 0; i < 20; i++) {
+        const x = scrollX(i, 50, 1);
+        ctx.fillRect(x, groundY + 12 + (i % 3) * 12, 6, 3);
+      }
+    }
+
+    // --- Dodo ---
+    function drawDodo(x, y) {
+      // Jalat: maassa ne liikkuvat vuorotellen, ilmassa ne ovat koukussa
+      ctx.strokeStyle = DODO_LEGS;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      if (player.onGround && !gameOver) {
+        const step = Math.floor(frame / 5) % 2 === 0 ? 4 : -4; // vaihtuu 5 ruudun välein
+        ctx.moveTo(x + 17, y + 34); ctx.lineTo(x + 17 + step, y + 44);
+        ctx.moveTo(x + 27, y + 34); ctx.lineTo(x + 27 - step, y + 44);
+      } else {
+        ctx.moveTo(x + 17, y + 34); ctx.lineTo(x + 12, y + 40);
+        ctx.moveTo(x + 27, y + 34); ctx.lineTo(x + 22, y + 40);
+      }
+      ctx.stroke();
+
+      // Valkoinen pörröinen pyrstö
+      ellipse(x + 4, y + 20, 6, 5, "white");
+      ellipse(x + 2, y + 26, 5, 4, "white");
+
+      // Pullea vartalo
+      ellipse(x + 20, y + 26, 18, 12, DODO_BODY);
+      // Kaula ja pää
+      ellipse(x + 30, y + 18, 6, 9, DODO_BODY);
+      ellipse(x + 33, y + 11, 9, 8, DODO_BODY);
+      // Siipi (pikkuruinen, koska dodo ei lentänyt)
+      ellipse(x + 17, y + 25, 9, 6, DODO_WING);
+
+      // Iso koukkunokka
+      ctx.fillStyle = DODO_BEAK;
+      ctx.beginPath();
+      ctx.moveTo(x + 38, y + 8);
+      ctx.quadraticCurveTo(x + 52, y + 8, x + 50, y + 17); // koukku alas
+      ctx.lineTo(x + 46, y + 15);
+      ctx.lineTo(x + 38, y + 15);
+      ctx.fill();
+
+      // Silmä (pelin loputtua X-silmä!)
+      if (gameOver) {
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x + 32, y + 7);  ctx.lineTo(x + 38, y + 13);
+        ctx.moveTo(x + 38, y + 7);  ctx.lineTo(x + 32, y + 13);
+        ctx.stroke();
+      } else {
+        ellipse(x + 35, y + 10, 3.5, 3.5, "white");
+        ellipse(x + 36, y + 10, 1.8, 1.8, "black");
+      }
+    }
+
+    // --- Tulipallo ---
+    function drawFireball(obstacle) {
+      const r = obstacle.width / 2;      // säde = puolet halkaisijasta
+      const cx = obstacle.x + r;         // keskipisteen x
+      const cy = obstacle.y + r;         // keskipisteen y
+
+      // Liekkihäntä taakse (oikealle, koska pallo liikkuu vasemmalle).
+      // Math.random tekee liekeistä lepattavia.
+      for (let i = 4; i >= 1; i--) {
+        const flicker = Math.random() * 4;
+        ellipse(cx + i * r * 0.45, cy + (Math.random() - 0.5) * 4,
+                r * (1 - i * 0.18) + flicker, r * (1 - i * 0.2),
+                "rgba(255," + (80 + i * 30) + ",0," + (0.7 - i * 0.12) + ")");
+      }
+
+      // Itse pallo: säteittäinen liukuväri keltaisesta punaiseen
+      const gradient = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 2, cx, cy, r);
+      gradient.addColorStop(0, "#fffde7");
+      gradient.addColorStop(0.4, "#ffca28");
+      gradient.addColorStop(0.8, "#ff6f00");
+      gradient.addColorStop(1, "#d50000");
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ============================================
+    //  Piirtäminen: kaikki yhdessä
+    // ============================================
+    // Järjestys on tärkeä! Ensin piirretty jää alle, kuin maalauksessa.
+    function draw() {
+      drawSky();
+      drawSea();
+      drawPalms();
+      drawGround();
+
+      for (const obstacle of obstacles) {
+        drawFireball(obstacle);
+      }
+
+      drawDodo(player.x, player.y);
+
+      // Pisteet oikeaan yläkulmaan
+      ctx.fillStyle = "#3e2723";
       ctx.textAlign = "right";
       ctx.font = "bold 24px sans-serif";
       ctx.fillText("Pisteet: " + Math.floor(score), canvas.width - 20, 40);
@@ -256,7 +469,7 @@
         ctx.fillStyle = "white";
         ctx.textAlign = "center";
         ctx.font = "bold 48px sans-serif";
-        ctx.fillText("PELI OHI!", canvas.width / 2, canvas.height / 2 - 30);
+        ctx.fillText("DODO PALOI! 🔥", canvas.width / 2, canvas.height / 2 - 30);
         ctx.font = "bold 28px sans-serif";
         ctx.fillText("Sait " + Math.floor(score) + " pistettä",
                      canvas.width / 2, canvas.height / 2 + 10);
