@@ -89,6 +89,12 @@
     const ARROW_FLY_HEIGHT = 37;   // Kuinka korkealla maasta nuoli lentää (dodon pään korkeus)
     const ARROW_LENGTH = 50;       // Nuolen pituus
 
+    // --- Hedelmät (lisäpisteet) ---
+    const FRUIT_CHANCE = 0.5;   // Todennäköisyys, että esteiden väliin tulee hedelmärivi
+    const FRUIT_POINTS = 25;    // Montako lisäpistettä yksi hedelmä antaa
+    const FRUIT_SIZE = 28;      // Hedelmän koko
+    const FRUIT_TYPES = ["🍌", "🥭", "🍍", "🍉", "🥥"]; // Kokeile lisätä omia emojeja!
+
     // --- Kilpi (tehostin) ---
     const SHIELD_CHANCE = 0.2;  // Todennäköisyys, että tulipallon jälkeen tulee kilpi (0.2 = 20 %)
     const SHIELD_SIZE = 30;     // Kilven koko
@@ -158,6 +164,10 @@
     let causeOfDeath = "fire";
     // Onko laite kosketusnäytöllinen? Silloin piirretään vinkkinuolet hiekkaan.
     const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
+    // Kerättävät hedelmät
+    let fruits = [];
+    // Leijuvat "+25"-tekstit, jotka näkyvät kun hedelmän nappaa
+    let floatingTexts = [];
     // Ilmassa leijuvat kilvet, joita voi napata
     let shields = [];
     // Onko dodolla kilpi suojana?
@@ -253,6 +263,13 @@
       playTone(1200, 1200, 0.15, "sine", 0.3, 0.14);
     }
 
+    // Hedelmän nappaus: lyhyt "bling". Jokainen rivin seuraava hedelmä
+    // soi vähän korkeammalta – nappaa koko rivi, niin kuulet melodian!
+    function playFruitSound(index) {
+      const freq = 800 + index * 150;
+      playTone(freq, freq * 1.5, 0.1, "square", 0.1);
+    }
+
     // Kilpi särkyy: kirkas "kling" joka laskee
     function playShieldBreakSound() {
       playTone(1500, 300, 0.3, "triangle", 0.35);
@@ -334,6 +351,8 @@
       hasShield = false;
       shieldPopTimer = 0;
       ducking = false;
+      fruits = [];
+      floatingTexts = [];
     }
 
     // ============================================
@@ -472,6 +491,39 @@
       });
     }
 
+    // ============================================
+    //  Hedelmärivin luominen
+    // ============================================
+    function spawnFruitRow() {
+      const count = randomBetween(3, 5);        // montako hedelmää riviin
+      const spacing = 40;                        // hedelmien väli pikseleinä
+      const rowWidth = (count - 1) * spacing;
+      // Rivi keskitetään tämän ja seuraavan esteen väliin
+      const gapPixels = nextObstacleIn * speed;
+      const startX = canvas.width + gapPixels / 2 - rowWidth / 2;
+      // Arvotaan muoto: suora rivi maassa tai kaari ilmassa (pitää hypätä!)
+      const isArc = Math.random() < 0.5;
+      const emoji = FRUIT_TYPES[randomBetween(0, FRUIT_TYPES.length - 1)];
+
+      for (let i = 0; i < count; i++) {
+        let y = groundY - FRUIT_SIZE - 8; // maan rajassa
+        if (isArc) {
+          // t kulkee 0 → 1 rivin alusta loppuun. Math.sin(t * PI) on
+          // 0 reunoilla ja 1 keskellä, joten keskimmäinen hedelmä on korkeimmalla.
+          const t = count === 1 ? 0.5 : i / (count - 1);
+          y -= 30 + Math.sin(t * Math.PI) * 60;
+        }
+        fruits.push({
+          x: startX + i * spacing,
+          y: y,
+          width: FRUIT_SIZE,
+          height: FRUIT_SIZE,
+          emoji: emoji,
+          index: i // monesko rivissä – äänen korkeutta varten
+        });
+      }
+    }
+
     // Onko dodo oikeasti kyykyssä? Kyykkyyn pääsee vain maassa –
     // ilmassa alas-nappi tekee sen sijaan nopean pudotuksen.
     function isDucked() {
@@ -539,7 +591,9 @@
         //  - arpa osuu (Math.random() antaa luvun väliltä 0–1)
         //  - dodolla ei ole jo kilpeä, eikä ruudulla ole toista kilpeä
         // && tarkoittaa "ja": kaikkien ehtojen pitää olla tosia.
+        let shieldSpawned = false; // muistetaan, tuliko kilpi – silloin ei tehdä hedelmiä
         if (Math.random() < SHIELD_CHANCE && !hasShield && shields.length === 0) {
+          shieldSpawned = true;
           // Kilpi sijoitetaan puoliväliin tämän ja seuraavan tulipallon väliin,
           // jotta sen voi napata ilman että osuu tulipalloon.
           shields.push({
@@ -550,7 +604,25 @@
             height: SHIELD_SIZE
           });
         }
+
+        // Muulloin esteiden väliin voi tulla hedelmärivi
+        if (!shieldSpawned && Math.random() < FRUIT_CHANCE) {
+          spawnFruitRow();
+        }
       }
+
+      // --- Hedelmien liikutus ---
+      for (const fruit of fruits) {
+        fruit.x -= speed;
+      }
+      fruits = fruits.filter(f => f.x + f.width > 0);
+
+      // --- Leijuvat tekstit nousevat ja haalistuvat ---
+      for (const t of floatingTexts) {
+        t.y -= 1;
+        t.life--;
+      }
+      floatingTexts = floatingTexts.filter(t => t.life > 0);
 
       // --- Kilpien liikutus ---
       for (const shield of shields) {
@@ -603,6 +675,22 @@
         }
       }
       shields = shields.filter(s => !s.taken);
+
+      // Hedelmien nappaus: lisäpisteitä!
+      for (const fruit of fruits) {
+        if (isColliding(playerBox, fruit)) {
+          fruit.taken = true;
+          score += FRUIT_POINTS;
+          playFruitSound(fruit.index);
+          floatingTexts.push({
+            text: "+" + FRUIT_POINTS,
+            x: fruit.x + fruit.width / 2,
+            y: fruit.y,
+            life: 40 // montako ruutua teksti näkyy
+          });
+        }
+      }
+      fruits = fruits.filter(f => !f.taken);
 
       for (const obstacle of obstacles) {
         // Tulipallon laatikkoa pienennetään, koska ympyrä ei täytä
@@ -875,6 +963,34 @@
       ctx.fillText("napauta = hyppy ⬆", canvas.width - 12, canvas.height - 14);
     }
 
+    // --- Hedelmä ---
+    // Hedelmät ovat emojeja: ne piirretään tekstinä, ihan kuin kirjaimet!
+    function drawFruit(fruit) {
+      // Pieni pomppiminen; fruit.index tekee sen, että hedelmät pomppivat
+      // eri tahdissa (aaltomaisesti)
+      const bob = Math.sin(frame * 0.15 + fruit.index) * 3;
+      ctx.save();
+      ctx.font = FRUIT_SIZE + "px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle"; // teksti keskitetään pystysuunnassa
+      ctx.fillText(fruit.emoji, fruit.x + fruit.width / 2, fruit.y + fruit.height / 2 + bob);
+      ctx.restore();
+    }
+
+    // --- Leijuva pisteteksti ---
+    function drawFloatingText(t) {
+      ctx.save();
+      ctx.globalAlpha = t.life / 40; // haalistuu loppua kohti (1 → 0)
+      ctx.font = "bold 22px sans-serif";
+      ctx.textAlign = "center";
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#3e2723";   // tumma reunus
+      ctx.strokeText(t.text, t.x, t.y);
+      ctx.fillStyle = "#ffd54f";     // kultainen täyttö
+      ctx.fillText(t.text, t.x, t.y);
+      ctx.restore();
+    }
+
     // --- Kilpi-tehostin (leijuva esine) ---
     function drawShieldItem(shield) {
       const x = shield.x;
@@ -954,6 +1070,10 @@
         drawShieldItem(shield);
       }
 
+      for (const fruit of fruits) {
+        drawFruit(fruit);
+      }
+
       if (isDucked()) {
         // Kyykky: piirretään sama dodo, mutta litistettynä!
         // translate siirtää piirtokynän alkupisteen dodon jalkoihin,
@@ -968,6 +1088,10 @@
         drawDodo(player.x, player.y);
       }
       drawShieldBubble();
+
+      for (const t of floatingTexts) {
+        drawFloatingText(t);
+      }
 
       // Pisteet oikeaan yläkulmaan
       ctx.fillStyle = "#3e2723";
